@@ -1,5 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import GCNConv
+import torch
 
 
 class EmbeddingNet(nn.Module):
@@ -38,6 +40,53 @@ class EmbeddingNetL2(EmbeddingNet):
 
     def get_embedding(self, x):
         return self.forward(x)
+
+
+class GCNBaseNet(nn.Module):
+    def __init__(self, num_features, num_relations, embedding_dim, num_layers):
+        super(GCNBaseNet, self).__init__()
+        self.num_relations = num_relations
+        self.gcn_layers = nn.ModuleList([
+            nn.ModuleDict({
+                f'gcn_{i}': GCNConv(embedding_dim if layer > 0 else num_features, embedding_dim)
+                for i in range(num_relations)
+            }) for layer in range(num_layers)
+        ])
+
+        self.fc_int = nn.Sequential(nn.Linear(embedding_dim * num_relations, embedding_dim),
+                                    nn.ReLU(),
+                                    nn.Linear(embedding_dim, embedding_dim))
+
+        self.fc = nn.Sequential(
+            nn.Linear(60 * embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, 2)
+        )
+
+    def forward(self, data_list):
+        current_embeddings = [data_list[i].x for i in range(len(data_list))]  # !!!
+        for layer in self.gcn_layers:
+            next_embeddings = []
+            for i in range(len(data_list)):  # iteration over batch - could be significantly speed up
+                acc_emb = []
+                for j in range(self.num_relations):
+                    x, edge_index, edge_weight = current_embeddings[i], data_list[i][f'edge_index_type_{j}'], data_list[i][f'edge_attr_type_{j}']
+                    emb = layer[f'gcn_{j}'](x, edge_index, edge_weight=edge_weight)  # Apply GCN layer
+                    acc_emb.append(emb)
+                acc = torch.cat(acc_emb, dim=1)
+                acc = self.fc_int(acc)
+                next_embeddings.append(acc)
+            current_embeddings = next_embeddings
+        current_embeddings = torch.stack(
+            current_embeddings)  # I want to keep common embeddings and use interconnectivity
+        current_embeddings = current_embeddings.view(current_embeddings.size(0), -1)
+        output = self.fc(current_embeddings)
+        return output
+
+    def get_embedding(self, data_list):
+        return self.forward(data_list)
 
 
 class ClassificationNet(nn.Module):

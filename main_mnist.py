@@ -10,96 +10,67 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.optim import lr_scheduler
-
-import matplotlib.pyplot as plt
-from torchvision import transforms
-from torchvision.datasets import MNIST
+from torch_geometric.data import DataLoader
 
 from trainer import fit
-from datasets import SiameseMNIST, TripletMNIST, BalancedBatchSampler
-from metrics import AccumulatedAccuracyMetric, AverageNonzeroTripletsMetric
-from networks import EmbeddingNet, ClassificationNet, SiameseNet, TripletNet
-from losses import ContrastiveLoss, TripletLoss, OnlineContrastiveLoss, OnlineTripletLoss
+from datasets import SiameseGCN, TripletGCN, BalancedBatchSampler, transform_data_to_graphs, GraphDataset
+from metrics import AverageNonzeroTripletsMetric
+from networks import EmbeddingNet, ClassificationNet, TripletNet
+from losses import TripletLoss, OnlineContrastiveLoss, OnlineTripletLoss
 
 from utils import HardNegativePairSelector  # Strategies for selecting pairs within a minibatch
 from utils import RandomNegativeTripletSelector  # Strategies for selecting triplets within a minibatch
+from embedding_tools import plot_embeddings, extract_embeddings
+
+from networks import GCNBaseNet, SiameseNet
+from losses import ContrastiveLoss
+
 
 warnings.filterwarnings("ignore")
 cuda = torch.cuda.is_available()
 
 # load and Normalize dataset
-mean, std = 0.1307, 0.3081
-train_dataset = MNIST('data/MNIST', train=True, download=False,
-                      transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
-test_dataset = MNIST('data/MNIST', train=False, download=False,
-                     transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
-# Print Data
-# print(train_dataset)
-# print(train_dataset[0][0].shape)
+train_filenames = [['data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns.npy', '../data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
+                   ['data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns.npy', '../data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
+
+test_filenames = [['data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns.npy', '../data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
+                   ['data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns.npy', '../data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
+
+train_dataset = GraphDataset(transform_data_to_graphs(train_filenames))
+test_dataset = GraphDataset(transform_data_to_graphs(test_filenames))
 
 # Common setup
-n_classes = 10
-mnist_classes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-
-def plot_embeddings(embeddings, targets, title=None, xlim=None, ylim=None):
-    plt.figure(figsize=(10,10))
-    for i in range(10):
-        inds = np.where(targets==i)[0]
-        plt.scatter(embeddings[inds,0], embeddings[inds,1], alpha=0.5, color=colors[i])
-    if xlim:
-        plt.xlim(xlim[0], xlim[1])
-    if ylim:
-        plt.ylim(ylim[0], ylim[1])
-    plt.legend(mnist_classes)
-    plt.title(title)
-    plt.show()
-
-def extract_embeddings(dataloader, model):
-    with torch.no_grad():
-        model.eval()
-        embeddings = np.zeros((len(dataloader.dataset), 2))
-        labels = np.zeros(len(dataloader.dataset))
-        k = 0
-        for images, target in dataloader:
-            if cuda:
-                images = images.cuda()
-            embeddings[k:k+len(images)] = model.get_embedding(images).data.cpu().numpy()
-            labels[k:k+len(images)] = target.numpy()
-            k += len(images)
-    return embeddings, labels
+n_classes = 4
+batch_size = 64
+embedding_dim = 24
 
 # Baseline: Classification with softmax
 # We'll train the model for classification and use outputs of penultimate layer as embeddings
 # Set up data loaders
 title = '1. Baseline - classification with softmax'
 print(f'\n{title}:')
-batch_size = 256
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
-# Set up the network and training parameters
-embedding_net = EmbeddingNet()
-model = ClassificationNet(embedding_net, n_classes=n_classes)
-if cuda:
-    model.cuda()
+embedding_net = GCNBaseNet(num_features=10, num_relations=5, embedding_dim=embedding_dim, num_layers=1)
+model = ClassificationNet(embedding_net, n_classes=4)
+
 loss_fn = torch.nn.NLLLoss()
 lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr)
 scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+n_epochs = 50
 log_interval = 50
-
-fit(train_loader, test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval,
-    metrics=[AccumulatedAccuracyMetric()])
 
 train_embeddings_baseline, train_labels_baseline = extract_embeddings(train_loader, model)
 plot_embeddings(train_embeddings_baseline, train_labels_baseline, f'{title}, train_embeddings_baseline')
 val_embeddings_baseline, val_labels_baseline = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_baseline, val_labels_baseline, f'{title}, val_embeddings_baseline')
+
 # While the embeddings look separable (which is what we trained them for),
 # they don't have good metric properties. They might not be the best choice as a descriptor for new classes.
+
 
 # Siamese network
 # Now we'll train a siamese network that takes a pair of images and trains the embeddings
@@ -108,16 +79,17 @@ plot_embeddings(val_embeddings_baseline, val_labels_baseline, f'{title}, val_emb
 # Set up data loaders
 title = '2. Siamese network'
 print(f'\n{title}:')
-siamese_train_dataset = SiameseMNIST(train_dataset) # Returns pairs of images and target same/different
-siamese_test_dataset = SiameseMNIST(test_dataset)
-batch_size = 128
+siamese_train_dataset = SiameseGCN(train_dataset, train=True)
+siamese_test_dataset = SiameseGCN(test_dataset)
+batch_size = 64
+embedding_dim=64
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-siamese_train_loader = torch.utils.data.DataLoader(siamese_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-siamese_test_loader = torch.utils.data.DataLoader(siamese_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
+siamese_train_loader = DataLoader(siamese_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+siamese_test_loader = DataLoader(siamese_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
 
 # Set up the network and training parameters
 margin = 1.
-embedding_net = EmbeddingNet()
+embedding_net = GCNBaseNet(num_features=10, num_relations=5, embedding_dim=embedding_dim, num_layers=3)
 model = SiameseNet(embedding_net)
 if cuda:
     model.cuda()
@@ -125,9 +97,8 @@ loss_fn = ContrastiveLoss(margin)
 lr = 1e-3
 optimizer = optim.Adam(model.parameters(), lr=lr)
 scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+n_epochs = 10
 log_interval = 100
-
 fit(siamese_train_loader, siamese_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval)
 
 train_embeddings_cl, train_labels_cl = extract_embeddings(train_loader, model)
@@ -143,17 +114,16 @@ plot_embeddings(val_embeddings_cl, val_labels_cl, f'{title}, val_embeddings_cl')
 # than it is to the negative example by some margin value.
 title = '3. Triplet network'
 print(f'\n{title}:')
-# Set up data loaders
-triplet_train_dataset = TripletMNIST(train_dataset) # Returns triplets of images
-triplet_test_dataset = TripletMNIST(test_dataset)
-batch_size = 128
-kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-triplet_train_loader = torch.utils.data.DataLoader(triplet_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-triplet_test_loader = torch.utils.data.DataLoader(triplet_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
 
-# Set up the network and training parameters
+triplet_train_dataset = TripletGCN(train_dataset, train=True) # Returns triplets of images
+triplet_test_dataset = TripletGCN(test_dataset)
+
+batch_size = 64
+kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
+triplet_train_loader = DataLoader(triplet_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+triplet_test_loader = DataLoader(triplet_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
 margin = 1.
-embedding_net = EmbeddingNet()
+embedding_net = GCNBaseNet(num_features=10, num_relations=5, embedding_dim=embedding_dim, num_layers=3)
 model = TripletNet(embedding_net)
 if cuda:
     model.cuda()
@@ -161,7 +131,7 @@ loss_fn = TripletLoss(margin)
 lr = 1e-3
 optimizer = optim.Adam(model.parameters(), lr=lr)
 scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+n_epochs = 10
 log_interval = 100
 
 fit(triplet_train_loader, triplet_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval)
@@ -170,6 +140,7 @@ train_embeddings_tl, train_labels_tl = extract_embeddings(train_loader, model)
 plot_embeddings(train_embeddings_tl, train_labels_tl, f'{title}, train_embeddings')
 val_embeddings_tl, val_labels_tl = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_tl, val_labels_tl, f'{title}, val_embeddings')
+
 
 ## Online pair selection
 ## Steps
