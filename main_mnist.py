@@ -30,11 +30,11 @@ warnings.filterwarnings("ignore")
 cuda = torch.cuda.is_available()
 
 # load and Normalize dataset
-train_filenames = [['data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns.npy', '../data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
-                   ['data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns.npy', '../data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
+train_filenames = [['data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns.npy', 'data/dataset/train_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
+                   ['data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns.npy', 'data/dataset/train_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
 
-test_filenames = [['data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns.npy', '../data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
-                   ['data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns.npy', '../data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
+test_filenames = [['data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns.npy', 'data/dataset/test_2022-06-01_2023-05-31_260d/buy_patterns_clusters.npy'],
+                   ['data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns.npy', 'data/dataset/test_2022-06-01_2023-05-31_260d/sell_patterns_clusters.npy']]
 
 train_dataset = GraphDataset(transform_data_to_graphs(train_filenames))
 test_dataset = GraphDataset(transform_data_to_graphs(test_filenames))
