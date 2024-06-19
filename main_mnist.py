@@ -15,15 +15,11 @@ from torch_geometric.data import DataLoader
 from trainer import fit
 from datasets import SiameseGCN, TripletGCN, BalancedBatchSampler, transform_data_to_graphs, GraphDataset
 from metrics import AverageNonzeroTripletsMetric
-from networks import EmbeddingNet, ClassificationNet, TripletNet
-from losses import TripletLoss, OnlineContrastiveLoss, OnlineTripletLoss
+from networks import GCNBaseNet, ClassificationNet, SiameseNet, TripletNet
+from losses import TripletLoss, OnlineContrastiveLoss, OnlineTripletLoss, ContrastiveLoss
 
-from utils import HardNegativePairSelector  # Strategies for selecting pairs within a minibatch
-from utils import RandomNegativeTripletSelector  # Strategies for selecting triplets within a minibatch
+from utils import HardNegativePairSelector, RandomNegativeTripletSelector  # Strategies for selecting triplets within a minibatch
 from embedding_tools import plot_embeddings, extract_embeddings
-
-from networks import GCNBaseNet, SiameseNet
-from losses import ContrastiveLoss
 
 
 warnings.filterwarnings("ignore")
@@ -151,17 +147,15 @@ plot_embeddings(val_embeddings_tl, val_labels_tl, f'{title}, val_embeddings')
 # 5. Train the network!
 title = '4. Online pair selection - negative mining'
 print(f'\n{title}:')
-# We'll create mini batches by sampling labels that will be present in the mini batch and number of examples from each class
-train_batch_sampler = BalancedBatchSampler(train_dataset.train_labels, n_classes=10, n_samples=25)
-test_batch_sampler = BalancedBatchSampler(test_dataset.test_labels, n_classes=10, n_samples=25)
-
+train_batch_sampler = BalancedBatchSampler(torch.Tensor(train_dataset.labels), n_classes=4, n_samples=20)
+test_batch_sampler = BalancedBatchSampler(torch.Tensor(test_dataset.labels), n_classes=4, n_samples=20)
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-online_train_loader = torch.utils.data.DataLoader(train_dataset, batch_sampler=train_batch_sampler, **kwargs)
-online_test_loader = torch.utils.data.DataLoader(test_dataset, batch_sampler=test_batch_sampler, **kwargs)
+online_train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler)
+online_test_loader = DataLoader(test_dataset, batch_sampler=test_batch_sampler)
 
 # Set up the network and training parameters
 margin = 1.
-embedding_net = EmbeddingNet()
+embedding_net = GCNBaseNet(num_features=10, num_relations=5, embedding_dim=embedding_dim, num_layers=1)
 model = embedding_net
 if cuda:
     model.cuda()
@@ -191,16 +185,15 @@ plot_embeddings(val_embeddings_ocl, val_labels_ocl, f'{title}, val_embeddings')
 title = '5. Online triplet selection - negative mining'
 print(f'\n{title}:')
 # We'll create mini batches by sampling labels that will be present in the mini batch and number of examples from each class
-train_batch_sampler = BalancedBatchSampler(train_dataset.train_labels, n_classes=10, n_samples=25)
-test_batch_sampler = BalancedBatchSampler(test_dataset.test_labels, n_classes=10, n_samples=25)
+train_batch_sampler = BalancedBatchSampler(torch.Tensor(train_dataset.labels), n_classes=4, n_samples=20)
+test_batch_sampler = BalancedBatchSampler(torch.Tensor(test_dataset.labels), n_classes=4, n_samples=20)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-online_train_loader = torch.utils.data.DataLoader(train_dataset, batch_sampler=train_batch_sampler, **kwargs)
-online_test_loader = torch.utils.data.DataLoader(test_dataset, batch_sampler=test_batch_sampler, **kwargs)
+online_train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler)
+online_test_loader = DataLoader(test_dataset, batch_sampler=test_batch_sampler)
 
-# Set up the network and training parameters
 margin = 1.
-embedding_net = EmbeddingNet()
+embedding_net = GCNBaseNet(num_features=10, num_relations=5, embedding_dim=embedding_dim, num_layers=1)
 model = embedding_net
 if cuda:
     model.cuda()
